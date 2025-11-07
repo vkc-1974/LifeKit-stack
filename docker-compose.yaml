@@ -1,0 +1,104 @@
+services:
+  # MariaDB
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: livekit_db
+      MYSQL_USER: livekit_user
+      MYSQL_PASSWORD: livekit_pass
+    ports:
+      - "3316:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+
+  # Radis
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Livekit SFU Server
+  livekit:
+    image: livekit/livekit-server:latest
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "51000-51999:50000-50999/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    command: --config /etc/livekit.yaml --dev
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Livekit SIP Bridge
+  sip:
+    image: livekit/sip:latest
+    ports:
+      - "5060:5060/tcp"
+      - "5060:5060/udp"
+      - "55000-55999:50000-50999/udp"
+    environment:
+      SIP_CONFIG_BODY: |
+        log_level: debug
+        api_key: APIAr4ziPRxD7RQ
+        api_secret: NG4BDigFkZpjXZrJ7oPfHd9p0WdxPLuffJcAKUHJjKfC
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+        sip_port: 5060
+        rtp_port: 50000-50999
+        use_external_ip: true
+        media_timeout: "0s"
+    depends_on:
+      - livekit
+      - redis
+    restart: unless-stopped
+
+  # LLM (Ollama)
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    ##### restart: unless-stopped
+    command: serve
+
+  # DB MCP Server (HTTP)
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    depends_on:
+      - mariadb
+    ports:
+      - "8000:8000"
+    restart: unless-stopped    
+
+  # Voice Agent
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_API_KEY=APIAr4ziPRxD7RQ
+      - LIVEKIT_API_SECRET=NG4BDigFkZpjXZrJ7oPfHd9p0WdxPLuffJcAKUHJjKfC
+      - MCP_SERVER_URL=http://mcp:8000
+    depends_on:
+      - livekit
+      - ollama
+      - mcp
+      - sip
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:
+  redis_data:
+  ollama_data:
